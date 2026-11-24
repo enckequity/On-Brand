@@ -204,6 +204,6 @@ def outbound_text(args: Any) -> str:
 
 def gate_message(tool_name: str, profile: Profile, verdict: Verdict) -> str:
     issues = "\n".join(f"- {v.detail}" for v in verdict.hard)
-    return (f"On-Brand blocked {tool_name}: this copy breaks {profile.label}'s brand rules "
-            f"({verdict.score}/100).\n{issues}\nRewrite the copy to fix every point above, then call "
-            f"{tool_name} again. (Brand rules: {profile.brief()})")
+    return (f"Not sent: this copy breaks {profile.label}'s brand rules ({verdict.score}/100).\n{issues}\n"
+            f"Rewrite the copy to fix every point above, then try the same send again. "
+            f"(Brand rules: {profile.brief()})")

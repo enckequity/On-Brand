@@ -1,8 +1,9 @@
-"""On-Brand: brand voice and compliance rules Hermes can't break.
+"""On-Brand: brand voice and compliance rules your assistant can't break.
 
 Hermes surfaces used (all public):
   pre_llm_call          inject the active brand's rules so first drafts start on brand
-  transform_llm_output  lint every ```copy draft in the reply, auto-fix it, flag what can't be fixed
+  transform_llm_output  lint every ```copy draft in the reply, auto-fix it, flag what can't be fixed; a
+                        rewrite is passed through the other reply filters so theirs applies last
   pre_tool_call         block outbound posts (send / post / tweet / publish ...) that break the rules
   tools                 onbrand_check, onbrand_rules, onbrand_learn, onbrand_voiceover
   /onbrand              switch brands and manage profiles from any surface
@@ -27,18 +28,20 @@ _STORE = Store()
 _CTX: Any = None
 
 STARTER_PROFILES = [
-    Profile(name="nimbus", display_name="Nimbus Protocol", person="third",
-            tone="calm, precise, quietly confident; plain and factual",
-            banned=["revolutionary", "game-changer", "unlock", "to the moon", "LFG"],
-            preferred={"NIMBUS": "Nimbus", "nimbus protocol": "Nimbus Protocol", "defi": "DeFi"},
-            packs=["crypto"], max_chars=280, max_hashtags=1, max_emojis=1, max_exclamations=0,
-            examples=["Nimbus Protocol has opened a new feature to its community. The team explains "
-                      "how it works first, then points to where the details live."]),
-    Profile(name="pixel-pals", display_name="Pixel Pals", person="first",
-            tone="playful, warm, community-first; short sentences",
-            banned=["utility", "roadmap drop", "alpha leak"],
-            preferred={"pixel pals": "Pixel Pals", "PIXEL PALS": "Pixel Pals"},
-            packs=["crypto"], max_chars=280, max_hashtags=2, max_emojis=3, max_exclamations=2),
+    Profile(name="summit-plumbing", display_name="Summit Plumbing & Heating", person="first",
+            tone="friendly, plain-spoken, dependable; say what we'll do and when",
+            banned=["cheapest", "best in town", "guaranteed lowest price", "no job too big"],
+            preferred={"hvac": "HVAC", "summit plumbing": "Summit Plumbing & Heating"},
+            required=[], max_chars=320, max_hashtags=1, max_emojis=1, max_exclamations=1,
+            examples=["Thanks for calling Summit Plumbing & Heating. We can have a licensed tech out "
+                      "Thursday between 8 and 10 am, and we'll text you when they're on the way."]),
+    Profile(name="glow-med-spa", display_name="Glow Med Spa", person="first",
+            tone="warm, calm, reassuring; clear about what a treatment involves, never pushy",
+            banned=["miracle", "painless", "permanent results", "no side effects", "anti-aging cure"],
+            preferred={"botox": "Botox", "glow med spa": "Glow Med Spa"},
+            packs=["health"], max_chars=320, max_hashtags=2, max_emojis=1, max_exclamations=1,
+            examples=["Your consultation is booked for Tuesday at 2 pm. Our nurse injector will walk you "
+                      "through what to expect, and results vary from person to person."]),
 ]
 
 
@@ -108,7 +111,36 @@ def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> Optional
         event = _STORE.log({"kind": "draft", "brand": profile.name, "brand_label": profile.label,
                             "session_id": kwargs.get("session_id", ""), **draft.to_dict()})
         _notify("checked", event)
-    return result.text if result.changed else None
+    if not result.changed:
+        return None
+    return _after_other_filters(result.text, kwargs)
+
+
+# The engine takes the first transform_llm_output rewrite and stops, so a filter that runs on every reply
+# (white-label naming, redaction) would never see a rewrite this plugin made. Pass the rewrite through the
+# other registered filters before returning it, so theirs is applied last.
+_HOOK = "transform_llm_output"
+
+
+def _after_other_filters(text: str, kwargs: dict[str, Any]) -> str:
+    try:
+        from hermes_cli.plugins import get_plugin_manager
+    except ImportError:  # outside the host (core tests): nothing else filters replies
+        return text
+    # A host without these internals raises here: the engine then runs the other filters on the original
+    # reply instead, which is safer than returning a rewrite they never saw.
+    manager = get_plugin_manager()
+    others = [cb for cb in manager._hooks.get(_HOOK, []) if cb is not _on_transform_llm_output]
+    run = manager._run_hook_callbacks
+    if not others:
+        return text
+    failed: list = []
+    results = run(_HOOK, others, {**kwargs, "response_text": text}, failed)
+    rewrite = next((r for r in results if isinstance(r, str) and r), None)
+    if rewrite is None and failed:
+        # A filter that must see every reply could not run on the rewrite: do not deliver it unfiltered.
+        raise RuntimeError("another reply filter failed on the On-Brand rewrite")
+    return rewrite or text
 
 
 def _on_pre_tool_call(tool_name: str = "", args: Optional[dict] = None, **kwargs: Any):
@@ -370,12 +402,13 @@ def handle_command(raw: str) -> str:
         if _STORE.get(rest[0]):
             return f"'{rest[0]}' already exists."
         profile = _STORE.save(Profile(name=slug(rest[0]), display_name=" ".join(rest)))
-        return f"Created {profile.label}. Add rules with /onbrand set|ban|spell|pack, or ask Hermes."
+        return f"Created {profile.label}. Add rules with /onbrand set|ban|spell|pack, or just ask in chat."
     if cmd == "starter":
         for p in STARTER_PROFILES:
             if not _STORE.get(p.name):
                 _STORE.save(Profile.from_dict(p.to_dict()))
-        return "Added example brands: Nimbus Protocol (nimbus), Pixel Pals (pixel-pals). /onbrand use nimbus"
+        return ("Added example brands: Summit Plumbing & Heating (summit-plumbing), Glow Med Spa (glow-med-spa). "
+                "/onbrand use summit-plumbing")
     if cmd == "delete" and rest:
         return f"Deleted {rest[0]}." if _STORE.delete(rest[0]) else f"No brand '{rest[0]}'."
     if cmd == "set" and len(rest) >= 3:

@@ -11,19 +11,19 @@ deterministic linter before you see it, rewritten by your own model until it pas
 Hermes tries to post through a tool is checked at the door.
 
 ```
-you    ›  /onbrand use nimbus
-you    ›  rewrite this intern draft for Nimbus: "We're going to the moon!!! 🚀🚀🚀 Stake now
-          for GUARANTEED 50% returns, zero risk. LFG #staking #crypto #moon"
+you    ›  /onbrand use glow-med-spa
+you    ›  rewrite this draft for Glow: "Painless Botox with permanent results!!! Guaranteed results
+          or your money back 💉💉💉"
 
 hermes ›  ```copy
-          Nimbus Protocol has launched its new staking feature. Returns are not guaranteed
-          and vary with market conditions. NFA. #Nimbus
+          Our nurse injector will walk you through Botox at your consultation, including what to
+          expect afterwards. Results vary from person to person.
           ```
 
-you    ›  /onbrand check We're going to the moon!!! 🚀🚀🚀 GUARANTEED 50% returns, zero risk. LFG
-on-brand › Nimbus Protocol: 0/100: banned word 'to the moon'; banned word 'LFG'; 3 emoji, limit
-          is 1; 3 exclamation marks, limit is 0; promises guaranteed returns; claims no risk;
-          hype price prediction; add 'NFA' or 'DYOR' when talking about price, tokens or returns
+you    ›  /onbrand check Painless botox, permanent results!!! Guaranteed results 💉💉💉
+on-brand › Glow Med Spa: 0/100: banned word 'painless'; banned word 'permanent results';
+          spell 'botox' as 'Botox'; 3 emoji, limit is 1; 3 exclamation marks, limit is 1;
+          guaranteed results
 ```
 
 ### Why this is a plugin, not a prompt
@@ -77,8 +77,8 @@ hermes plugins install Mhiah/On-Brand --enable
 Restart Hermes (or the gateway) after installing. Then, in any Hermes chat:
 
 ```
-/onbrand starter          # adds two example brands to try
-/onbrand use nimbus       # turn enforcement on
+/onbrand starter          # adds two example brands to try (a plumbing company and a med spa)
+/onbrand use summit-plumbing   # turn enforcement on
 ```
 
 Or just tell Hermes about a brand: *"Set up an On-Brand profile for Acme Labs: third person,
@@ -93,7 +93,7 @@ once; every surface below uses the same brands and settings.
 | Surface | How to use it |
 |---|---|
 | **Terminal (CLI / TUI)** | Run `hermes`, then type `/onbrand ...` commands or ask for copy in plain English. Checks, fixes and blocks show as `/onbrand` notes under the reply. |
-| **Hermes Desktop** | Same chat commands. Turn on the plugin's Desktop half under **Capabilities → Plugins → On-Brand** to get the status-bar chip (*On-Brand: Nimbus Protocol*) and the On-Brand pane: brand switcher, toggles, totals, quick check and a live feed of fixes and blocks. |
+| **Hermes Desktop** | Same chat commands. Turn on the plugin's Desktop half under **Capabilities → Plugins → On-Brand** to get the status-bar chip (*On-Brand: Summit Plumbing & Heating*) and the On-Brand pane: brand switcher, toggles, totals, quick check and a live feed of fixes and blocks. |
 | **Telegram, Discord, Slack, WhatsApp and other messaging apps** | Connect the app with `hermes gateway setup`, then start the gateway (`hermes gateway start`). Message your bot as usual: `/onbrand` works there too and appears in Telegram's command menu. Replies are checked before they are sent. Turn on `hold_stream` (below) so off-brand text is never shown even briefly. |
 | **API server (OpenAI-compatible `/v1/chat/completions`)** | Apps that talk to Hermes over its API get checked replies with no extra setup. With `hold_stream` on, the response stream carries only the checked text. |
 | **Scheduled jobs and automations** | Copy written by cron jobs or other automations passes through the same checks, and their posting tools hit the same gate. |
@@ -104,6 +104,10 @@ once; every surface below uses the same brands and settings.
 - **One active brand per Hermes profile.** `/onbrand use <brand>` applies to every chat that
   profile serves, on every surface. To run two brands at once (say, two client Telegram groups),
   give each its own Hermes profile.
+- **Other reply filters.** The host keeps the first reply rewrite a plugin returns, so On-Brand passes
+  its rewrite through the other registered reply filters (white-label naming, redaction) and returns
+  their result: theirs always applies last. If one of them fails on the rewrite, the rewrite is dropped
+  and the host runs them on the original reply instead.
 - **Streaming.** With `hold_stream` off (the default), a reply can stream in and then be replaced
   by its fixed version when the turn ends. With it on, users only ever see the checked version.
   For messaging apps and anything client-facing, turn it on.
