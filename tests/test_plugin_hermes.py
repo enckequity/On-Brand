@@ -99,32 +99,18 @@ def test_nothing_happens_when_off(loaded):
     assert out == []
 
 
-def test_rewrite_goes_through_the_other_reply_filters_last(loaded):
-    """TeamShift #4637: the engine keeps the first rewrite, so another filter (white-label naming)
-    must see On-Brand's rewrite, not only the original reply."""
+def test_the_same_reply_twice_in_a_turn_is_answered_from_the_cache(loaded):
+    """TeamShift #4637: a white-label filter that builds on this rewrite runs it first, then the host
+    runs it again on the same reply; the second answer is the same, with no second rewrite or log."""
     manager, module, calls = loaded
-    seen = []
-
-    def white_label(response_text="", **_):
-        seen.append(response_text)
-        return response_text.replace("licensed tech", "licensed technician") if "licensed tech" in response_text else None
-
-    manager._hooks.setdefault("transform_llm_output", []).append(white_label)
     module.handle_command("starter")
     module.handle_command("use summit-plumbing")
     reply = "```copy\nWe're the cheapest plumbers in town!!!\n```"
-    out = [r for r in plugins.invoke_hook("transform_llm_output", response_text=reply, session_id="s",
-                                          model="m", platform="cli", turn_id="t3") if isinstance(r, str)]
-    assert out and "licensed technician" in out[0] and "cheapest" not in out[0]
-    assert any(GOOD in s for s in seen)
-
-    def broken(response_text="", **_):
-        raise RuntimeError("filter down")
-
-    manager._hooks["transform_llm_output"] = [module._on_transform_llm_output, broken]
-    out = [r for r in plugins.invoke_hook("transform_llm_output", response_text=reply, session_id="s",
-                                          model="m", platform="cli", turn_id="t4") if isinstance(r, str)]
-    assert out == []  # the rewrite is not delivered without the filter having seen it
+    first = module._on_transform_llm_output(response_text=reply, session_id="s", model="m", platform="cli", turn_id="t3")
+    assert first and "cheapest" not in first
+    made, logged = len(calls), len(module._STORE.history(100))
+    again = module._on_transform_llm_output(response_text=reply, session_id="s", model="m", platform="cli", turn_id="t3")
+    assert again == first and len(calls) == made and len(module._STORE.history(100)) == logged
 
 
 def test_new_brand_hint_does_not_name_the_host(loaded):

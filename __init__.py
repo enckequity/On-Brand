@@ -2,8 +2,8 @@
 
 Hermes surfaces used (all public):
   pre_llm_call          inject the active brand's rules so first drafts start on brand
-  transform_llm_output  lint every ```copy draft in the reply, auto-fix it, flag what can't be fixed; a
-                        rewrite is passed through the other reply filters so theirs applies last
+  transform_llm_output  lint every ```copy draft in the reply, auto-fix it, flag what can't be fixed; the
+                        same reply asked again in the same turn gets the same answer from a cache
   pre_tool_call         block outbound posts (send / post / tweet / publish ...) that break the rules
   tools                 onbrand_check, onbrand_rules, onbrand_learn, onbrand_voiceover
   /onbrand              switch brands and manage profiles from any surface
@@ -11,9 +11,12 @@ Hermes surfaces used (all public):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shlex
+import threading
+from collections import OrderedDict
 from typing import Any, Optional
 
 from .onbrand import engine
@@ -94,10 +97,31 @@ def _on_pre_llm_call(**kwargs: Any) -> Optional[dict[str, str]]:
     return {"context": " ".join(parts)}
 
 
+# A host may run this filter more than once on the same reply (one filter that builds on another's rewrite,
+# then the host's own pass): the repeat gets the first answer without another model rewrite or log event.
+_SEEN: "OrderedDict[tuple, Optional[str]]" = OrderedDict()
+_SEEN_LOCK = threading.Lock()
+_SEEN_MAX = 64
+
+
 def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> Optional[str]:
     profile = _STORE.active()
     if profile is None or not response_text:
         return None
+    key = (kwargs.get("session_id", ""), kwargs.get("turn_id", ""), profile.name,
+           hashlib.sha256(response_text.encode()).hexdigest())
+    with _SEEN_LOCK:
+        if key in _SEEN:
+            return _SEEN[key]
+    answer = _enforce(response_text, profile, kwargs)
+    with _SEEN_LOCK:
+        _SEEN[key] = answer
+        while len(_SEEN) > _SEEN_MAX:
+            _SEEN.popitem(last=False)
+    return answer
+
+
+def _enforce(response_text: str, profile: Profile, kwargs: dict[str, Any]) -> Optional[str]:
     settings = _STORE.settings()
     try:
         result = engine.enforce(response_text, profile, _llm, scope=settings.get("scope", "drafts"),
@@ -111,36 +135,7 @@ def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> Optional
         event = _STORE.log({"kind": "draft", "brand": profile.name, "brand_label": profile.label,
                             "session_id": kwargs.get("session_id", ""), **draft.to_dict()})
         _notify("checked", event)
-    if not result.changed:
-        return None
-    return _after_other_filters(result.text, kwargs)
-
-
-# The engine takes the first transform_llm_output rewrite and stops, so a filter that runs on every reply
-# (white-label naming, redaction) would never see a rewrite this plugin made. Pass the rewrite through the
-# other registered filters before returning it, so theirs is applied last.
-_HOOK = "transform_llm_output"
-
-
-def _after_other_filters(text: str, kwargs: dict[str, Any]) -> str:
-    try:
-        from hermes_cli.plugins import get_plugin_manager
-    except ImportError:  # outside the host (core tests): nothing else filters replies
-        return text
-    # A host without these internals raises here: the engine then runs the other filters on the original
-    # reply instead, which is safer than returning a rewrite they never saw.
-    manager = get_plugin_manager()
-    others = [cb for cb in manager._hooks.get(_HOOK, []) if cb is not _on_transform_llm_output]
-    run = manager._run_hook_callbacks
-    if not others:
-        return text
-    failed: list = []
-    results = run(_HOOK, others, {**kwargs, "response_text": text}, failed)
-    rewrite = next((r for r in results if isinstance(r, str) and r), None)
-    if rewrite is None and failed:
-        # A filter that must see every reply could not run on the rewrite: do not deliver it unfiltered.
-        raise RuntimeError("another reply filter failed on the On-Brand rewrite")
-    return rewrite or text
+    return result.text if result.changed else None
 
 
 def _on_pre_tool_call(tool_name: str = "", args: Optional[dict] = None, **kwargs: Any):
